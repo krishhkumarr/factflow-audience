@@ -8,6 +8,7 @@ import FactChecker from '@/components/FactChecker';
 import InfoCard from '@/components/InfoCard';
 import AudienceQuestions from '@/components/AudienceQuestions';
 import ApiKeyForm from '@/components/ApiKeyForm';
+import TextInput from '@/components/TextInput';
 
 const Index: React.FC = () => {
   return (
@@ -28,6 +29,8 @@ const Index: React.FC = () => {
             <ApiKeyForm />
             
             <TranscriptionDisplay />
+            
+            <TextInput />
             
             <div className="w-full my-4">
               <InfoCard />

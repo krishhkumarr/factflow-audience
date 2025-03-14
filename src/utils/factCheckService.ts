@@ -1,4 +1,3 @@
-
 import { FactStatus } from '@/context/TranscriptionContext';
 
 // Cache to avoid reprocessing the same text
@@ -7,9 +6,12 @@ const cache = new Map<string, any>();
 // Helper to introduce artificial delay (for when using cache)
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// The provided OpenAI API key (will use this if no key in localStorage)
+const DEFAULT_API_KEY = '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';
+
 // Function to get API key from localStorage or use provided one
-const getApiKey = (): string | null => {
-  return localStorage.getItem('openai_api_key');
+const getApiKey = (): string => {
+  return localStorage.getItem('openai_api_key') || DEFAULT_API_KEY;
 };
 
 // Store API key in localStorage
@@ -19,7 +21,7 @@ export const storeApiKey = (key: string): void => {
 
 // Check if API key exists
 export const hasApiKey = (): boolean => {
-  return !!getApiKey();
+  return true; // Always return true since we have a default key
 };
 
 // Clear API key from localStorage
@@ -30,10 +32,6 @@ export const clearApiKey = (): void => {
 // Call OpenAI API with proper error handling
 const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
   const apiKey = getApiKey();
-  
-  if (!apiKey) {
-    throw new Error('OpenAI API key not found');
-  }
   
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

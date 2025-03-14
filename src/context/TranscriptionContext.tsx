@@ -28,6 +28,7 @@ interface TranscriptionContextType {
   questions: Question[];
   startRecording: () => void;
   stopRecording: () => void;
+  processTextInput: (text: string) => void;
   clearAll: () => void;
 }
 
@@ -42,6 +43,55 @@ export const TranscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
   const [questions, setQuestions] = useState<Question[]>([]);
   const [segmentCount, setSegmentCount] = useState(0);
 
+  // Process new text segment (used for both speech and typed input)
+  const processTextSegment = useCallback((newSegment: string) => {
+    if (newSegment.split(' ').length < 3) return;
+    
+    setIsProcessing(true);
+    const segmentId = `segment-${segmentCount}`;
+    setSegmentCount(prev => prev + 1);
+    
+    // Add new segment with "checking" status
+    const newTranscriptionSegment: TranscriptionSegment = {
+      id: segmentId,
+      text: newSegment,
+      factStatus: 'checking'
+    };
+    
+    setTranscriptionHistory(prev => [...prev, newTranscriptionSegment]);
+    
+    // Process the segment with AI
+    Promise.all([
+      checkFact(newSegment),
+      getAdditionalInfo(newSegment),
+      generateQuestion(newSegment)
+    ]).then(([factResult, additionalInfo, questionResult]) => {
+      // Update the segment with AI results
+      setTranscriptionHistory(prev => 
+        prev.map(segment => 
+          segment.id === segmentId 
+            ? { 
+                ...segment, 
+                factStatus: factResult.status, 
+                factDetail: factResult.detail,
+                additionalInfo 
+              } 
+            : segment
+        )
+      );
+      
+      // Add new question if generated
+      if (questionResult) {
+        setQuestions(prev => [
+          ...prev, 
+          { id: `question-${Date.now()}`, text: questionResult, timestamp: Date.now() }
+        ]);
+      }
+      
+      setIsProcessing(false);
+    });
+  }, [segmentCount]);
+
   // Handle new transcription text
   const handleTranscription = useCallback((text: string) => {
     setCurrentTranscription(text);
@@ -51,54 +101,15 @@ export const TranscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
       const newSegment = text.substring(pendingSegment.length).trim();
       setPendingSegment(text);
       
-      // Only add meaningful segments
-      if (newSegment.split(' ').length >= 3) {
-        setIsProcessing(true);
-        const segmentId = `segment-${segmentCount}`;
-        setSegmentCount(prev => prev + 1);
-        
-        // Add new segment with "checking" status
-        const newTranscriptionSegment: TranscriptionSegment = {
-          id: segmentId,
-          text: newSegment,
-          factStatus: 'checking'
-        };
-        
-        setTranscriptionHistory(prev => [...prev, newTranscriptionSegment]);
-        
-        // Process the segment with AI
-        Promise.all([
-          checkFact(newSegment),
-          getAdditionalInfo(newSegment),
-          generateQuestion(newSegment)
-        ]).then(([factResult, additionalInfo, questionResult]) => {
-          // Update the segment with AI results
-          setTranscriptionHistory(prev => 
-            prev.map(segment => 
-              segment.id === segmentId 
-                ? { 
-                    ...segment, 
-                    factStatus: factResult.status, 
-                    factDetail: factResult.detail,
-                    additionalInfo 
-                  } 
-                : segment
-            )
-          );
-          
-          // Add new question if generated
-          if (questionResult) {
-            setQuestions(prev => [
-              ...prev, 
-              { id: `question-${Date.now()}`, text: questionResult, timestamp: Date.now() }
-            ]);
-          }
-          
-          setIsProcessing(false);
-        });
-      }
+      // Process the new segment
+      processTextSegment(newSegment);
     }
-  }, [pendingSegment, segmentCount]);
+  }, [pendingSegment, processTextSegment]);
+
+  // Process manually entered text
+  const processTextInput = useCallback((text: string) => {
+    processTextSegment(text);
+  }, [processTextSegment]);
 
   // Start recording
   const startRecording = useCallback(() => {
@@ -163,6 +174,7 @@ export const TranscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
     questions,
     startRecording,
     stopRecording,
+    processTextInput,
     clearAll,
   };
 
