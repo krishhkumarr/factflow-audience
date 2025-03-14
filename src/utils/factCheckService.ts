@@ -1,19 +1,126 @@
-
 import { FactStatus } from '@/context/TranscriptionContext';
-import { callOpenAI } from './openaiService';
-import { getCachedValue, setCachedValue, hasCache, delay } from './cacheUtils';
-import { fallbackFactCheck, fallbackAdditionalInfo, fallbackQuestionGenerator } from './fallbackService';
-import { getApiKey, storeApiKey, hasApiKey, clearApiKey } from './apiKeyUtils';
 
-// Re-export the API key management functions
-export { storeApiKey, hasApiKey, clearApiKey };
+// Cache to avoid reprocessing the same text
+const cache = new Map<string, any>();
+
+// Helper to introduce artificial delay (for when using cache)
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// The provided OpenAI API key (will use this if no key in localStorage)
+const DEFAULT_API_KEY = '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';
+
+// Function to get API key from localStorage or use provided one
+const getApiKey = (): string => {
+  return localStorage.getItem('openai_api_key') || DEFAULT_API_KEY;
+};
+
+// Store API key in localStorage
+export const storeApiKey = (key: string): void => {
+  localStorage.setItem('openai_api_key', key);
+};
+
+// Check if API key exists
+export const hasApiKey = (): boolean => {
+  return true; // Always return true since we have a default key
+};
+
+// Clear API key from localStorage
+export const clearApiKey = (): void => {
+  localStorage.removeItem('openai_api_key');
+};
+
+// Call OpenAI API with proper error handling
+const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
+  const apiKey = getApiKey();
+  
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful, factual assistant. Provide accurate, concise responses.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.3
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'API request failed');
+    }
+    
+    const data = await response.json();
+    return data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('OpenAI API error:', error);
+    throw error;
+  }
+};
+
+// Fallback method for when API is unavailable
+const fallbackFactCheck = (text: string): { status: FactStatus, detail: string } => {
+  const lowerText = text.toLowerCase();
+  
+  if (lowerText.includes('earth is flat') || 
+      lowerText.includes('moon landing fake') || 
+      lowerText.includes('vaccines cause autism')) {
+    return { 
+      status: 'false', 
+      detail: 'This statement contradicts established scientific consensus.' 
+    };
+  } 
+  else if (lowerText.includes('water') && lowerText.includes('boil') ||
+           lowerText.includes('earth') && lowerText.includes('round') ||
+           lowerText.includes('gravity')) {
+    return { 
+      status: 'true', 
+      detail: 'This statement aligns with established scientific facts.' 
+    };
+  }
+  else if (lowerText.includes('will') || 
+           lowerText.includes('future') || 
+           lowerText.includes('might') || 
+           lowerText.includes('could')) {
+    return { 
+      status: 'uncertain', 
+      detail: 'This statement relates to future events or possibilities that cannot be verified.' 
+    };
+  }
+  else {
+    // Default to uncertain when we can't determine
+    return { 
+      status: 'uncertain', 
+      detail: 'There isn\'t enough context or information to verify this statement.' 
+    };
+  }
+};
 
 // Check if a statement is factual using OpenAI
 export const checkFact = async (text: string): Promise<{ status: FactStatus, detail: string }> => {
   // Check cache first
   const cacheKey = `fact-${text}`;
-  if (hasCache(cacheKey)) {
-    return getCachedValue(cacheKey);
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+  
+  if (!hasApiKey()) {
+    // Use fallback method if no API key
+    const result = fallbackFactCheck(text);
+    cache.set(cacheKey, result);
+    return result;
   }
   
   try {
@@ -47,13 +154,13 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
       : 'Analysis complete but no detailed explanation available.';
     
     const result = { status, detail };
-    setCachedValue(cacheKey, result);
+    cache.set(cacheKey, result);
     return result;
   } catch (error) {
     console.error('Error during fact check:', error);
     // Use fallback on API error
     const result = fallbackFactCheck(text);
-    setCachedValue(cacheKey, result);
+    cache.set(cacheKey, result);
     return result;
   }
 };
@@ -62,8 +169,25 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
 export const getAdditionalInfo = async (text: string): Promise<string> => {
   // Check cache first
   const cacheKey = `info-${text}`;
-  if (hasCache(cacheKey)) {
-    return getCachedValue(cacheKey);
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+  
+  if (!hasApiKey()) {
+    // Simulate API latency
+    await delay(Math.random() * 1500 + 500);
+    
+    // Use simplified fallback
+    const fallbackInfos = [
+      'This topic relates to ongoing research in multiple scientific disciplines.',
+      'Historical context is important when considering this statement.',
+      'There are multiple perspectives on this topic among experts in the field.',
+      'Recent studies have provided new insights into this area.',
+      'This concept has evolved significantly over the past decades.',
+    ];
+    const additionalInfo = fallbackInfos[Math.floor(Math.random() * fallbackInfos.length)];
+    cache.set(cacheKey, additionalInfo);
+    return additionalInfo;
   }
   
   try {
@@ -76,13 +200,13 @@ export const getAdditionalInfo = async (text: string): Promise<string> => {
     `;
     
     const additionalInfo = await callOpenAI(prompt, 100);
-    setCachedValue(cacheKey, additionalInfo);
+    cache.set(cacheKey, additionalInfo);
     return additionalInfo;
   } catch (error) {
     console.error('Error getting additional info:', error);
-    // Enhanced fallback on error
-    const fallbackInfo = fallbackAdditionalInfo(text);
-    setCachedValue(cacheKey, fallbackInfo);
+    // Fallback on error
+    const fallbackInfo = 'This topic connects to various fields of knowledge and ongoing research.';
+    cache.set(cacheKey, fallbackInfo);
     return fallbackInfo;
   }
 };
@@ -90,14 +214,31 @@ export const getAdditionalInfo = async (text: string): Promise<string> => {
 // Generate a question related to the statement
 export const generateQuestion = async (text: string): Promise<string | null> => {
   // Only generate questions occasionally to avoid overwhelming the audience
-  if (Math.random() > 0.5) {
+  if (Math.random() > 0.3) {
     return null;
   }
   
   // Check cache first
   const cacheKey = `question-${text}`;
-  if (hasCache(cacheKey)) {
-    return getCachedValue(cacheKey);
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+  
+  if (!hasApiKey()) {
+    // Simulate API latency
+    await delay(Math.random() * 2000 + 1000);
+    
+    // Use simplified fallback
+    const fallbackQuestions = [
+      'How might this information affect our understanding of related topics?',
+      'What are the ethical implications of this concept?',
+      'How has this idea evolved throughout history?',
+      'What counterarguments exist to this perspective?',
+      'How does this relate to everyday experiences?',
+    ];
+    const question = fallbackQuestions[Math.floor(Math.random() * fallbackQuestions.length)];
+    cache.set(cacheKey, question);
+    return question;
   }
   
   try {
@@ -114,13 +255,10 @@ export const generateQuestion = async (text: string): Promise<string | null> => 
     `;
     
     const question = await callOpenAI(prompt, 80);
-    setCachedValue(cacheKey, question);
+    cache.set(cacheKey, question);
     return question;
   } catch (error) {
     console.error('Error generating question:', error);
-    // Return a generated fallback question instead of null
-    const fallbackQuestion = fallbackQuestionGenerator(text);
-    setCachedValue(cacheKey, fallbackQuestion);
-    return fallbackQuestion;
+    return null; // Skip question on error
   }
 };
