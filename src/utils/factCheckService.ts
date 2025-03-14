@@ -107,7 +107,7 @@ export const getAdditionalInfo = async (text: string): Promise<string> => {
     additionalInfo = 'The human brain contains approximately 86 billion neurons, connected by trillions of synapses. It consumes about 20% of the body\'s energy despite being only 2% of its weight.';
   }
   else if (lowerText.includes('climate') || lowerText.includes('warming')) {
-    additionalInfo = 'Global climate data shows that the Earth's average temperature has increased by about 1.1°C since the pre-industrial era, primarily due to human activities.';
+    additionalInfo = 'Global climate data shows that the Earth\'s average temperature has increased by about 1.1°C since the pre-industrial era, primarily due to human activities.';
   }
   else if (lowerText.includes('quantum') || lowerText.includes('physics')) {
     additionalInfo = 'Quantum mechanics describes nature at the smallest scales of energy levels of atoms and subatomic particles, introducing concepts like wave-particle duality and quantum entanglement.';
@@ -156,7 +156,7 @@ export const generateQuestion = async (text: string): Promise<string | null> => 
     question = 'How does water scarcity affect global food security?';
   }
   else if (lowerText.includes('earth') || lowerText.includes('planet')) {
-    question = 'How has our understanding of Earth's place in the universe evolved over time?';
+    question = 'How has our understanding of Earth\'s place in the universe evolved over time?';
   }
   else if (lowerText.includes('gravity') || lowerText.includes('physics')) {
     question = 'How do gravitational waves help us understand the universe?';
