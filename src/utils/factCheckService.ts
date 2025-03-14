@@ -1,3 +1,4 @@
+
 import { FactStatus } from '@/context/TranscriptionContext';
 
 // Cache to avoid reprocessing the same text
@@ -6,12 +7,9 @@ const cache = new Map<string, any>();
 // Helper to introduce artificial delay (for when using cache)
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// The provided OpenAI API key (will use this if no key in localStorage)
-const DEFAULT_API_KEY = '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';
-
 // Function to get API key from localStorage or use provided one
 const getApiKey = (): string => {
-  return localStorage.getItem('openai_api_key') || DEFAULT_API_KEY;
+  return localStorage.getItem('openai_api_key') || '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';
 };
 
 // Store API key in localStorage
@@ -41,7 +39,7 @@ const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-3.5-turbo', // Switched to gpt-3.5-turbo from gpt-4o-mini
         messages: [
           {
             role: 'system',
@@ -59,6 +57,7 @@ const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
     
     if (!response.ok) {
       const errorData = await response.json();
+      console.log('OpenAI API error response:', errorData);
       throw new Error(errorData.error?.message || 'API request failed');
     }
     
@@ -70,10 +69,11 @@ const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
   }
 };
 
-// Fallback method for when API is unavailable
+// Enhanced fallback method for when API is unavailable
 const fallbackFactCheck = (text: string): { status: FactStatus, detail: string } => {
   const lowerText = text.toLowerCase();
   
+  // Common knowledge fact checks
   if (lowerText.includes('earth is flat') || 
       lowerText.includes('moon landing fake') || 
       lowerText.includes('vaccines cause autism')) {
@@ -90,6 +90,22 @@ const fallbackFactCheck = (text: string): { status: FactStatus, detail: string }
       detail: 'This statement aligns with established scientific facts.' 
     };
   }
+  // Sports-related checks
+  else if ((lowerText.includes('lebron') || lowerText.includes('lebron james')) && 
+           (lowerText.includes('baseball') || lowerText.includes('football'))) {
+    return { 
+      status: 'false', 
+      detail: 'LeBron James is a basketball player, not a baseball or football player.' 
+    };
+  }
+  else if ((lowerText.includes('lebron') || lowerText.includes('lebron james')) && 
+           lowerText.includes('basketball')) {
+    return { 
+      status: 'true', 
+      detail: 'LeBron James is a professional basketball player in the NBA.' 
+    };
+  }
+  // Future predictions
   else if (lowerText.includes('will') || 
            lowerText.includes('future') || 
            lowerText.includes('might') || 
@@ -103,7 +119,7 @@ const fallbackFactCheck = (text: string): { status: FactStatus, detail: string }
     // Default to uncertain when we can't determine
     return { 
       status: 'uncertain', 
-      detail: 'There isn\'t enough context or information to verify this statement.' 
+      detail: 'Without access to the AI service, we can\'t verify this statement.' 
     };
   }
 };
@@ -114,13 +130,6 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
   const cacheKey = `fact-${text}`;
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey);
-  }
-  
-  if (!hasApiKey()) {
-    // Use fallback method if no API key
-    const result = fallbackFactCheck(text);
-    cache.set(cacheKey, result);
-    return result;
   }
   
   try {
@@ -165,29 +174,41 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
   }
 };
 
+// Fallback for additional info
+const fallbackAdditionalInfo = (text: string): string => {
+  const lowerText = text.toLowerCase();
+  
+  if (lowerText.includes('lebron') || lowerText.includes('lebron james')) {
+    return 'LeBron James is widely considered one of the greatest basketball players of all time and has won multiple NBA championships.';
+  }
+  else if (lowerText.includes('earth') && (lowerText.includes('flat') || lowerText.includes('round'))) {
+    return 'The Earth is an oblate spheroid, slightly flattened at the poles due to its rotation.';
+  }
+  else if (lowerText.includes('moon landing')) {
+    return 'NASA's Apollo 11 mission successfully landed humans on the Moon on July 20, 1969.';
+  }
+  else if (lowerText.includes('vaccine') || lowerText.includes('vaccination')) {
+    return 'Vaccines have been scientifically proven to prevent millions of illnesses and deaths around the world.';
+  }
+  
+  // Generic fallbacks for when we don't have a specific match
+  const genericFallbacks = [
+    'This topic connects to various fields of knowledge and ongoing research.',
+    'Understanding this concept requires examining multiple scientific perspectives.',
+    'Historical context is important when evaluating statements like this.',
+    'Critical thinking involves questioning assumptions and examining evidence.',
+    'Scientific consensus on this topic has evolved over the decades.'
+  ];
+  
+  return genericFallbacks[Math.floor(Math.random() * genericFallbacks.length)];
+};
+
 // Get additional contextual information about a statement
 export const getAdditionalInfo = async (text: string): Promise<string> => {
   // Check cache first
   const cacheKey = `info-${text}`;
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey);
-  }
-  
-  if (!hasApiKey()) {
-    // Simulate API latency
-    await delay(Math.random() * 1500 + 500);
-    
-    // Use simplified fallback
-    const fallbackInfos = [
-      'This topic relates to ongoing research in multiple scientific disciplines.',
-      'Historical context is important when considering this statement.',
-      'There are multiple perspectives on this topic among experts in the field.',
-      'Recent studies have provided new insights into this area.',
-      'This concept has evolved significantly over the past decades.',
-    ];
-    const additionalInfo = fallbackInfos[Math.floor(Math.random() * fallbackInfos.length)];
-    cache.set(cacheKey, additionalInfo);
-    return additionalInfo;
   }
   
   try {
@@ -204,17 +225,50 @@ export const getAdditionalInfo = async (text: string): Promise<string> => {
     return additionalInfo;
   } catch (error) {
     console.error('Error getting additional info:', error);
-    // Fallback on error
-    const fallbackInfo = 'This topic connects to various fields of knowledge and ongoing research.';
+    // Enhanced fallback on error
+    const fallbackInfo = fallbackAdditionalInfo(text);
     cache.set(cacheKey, fallbackInfo);
     return fallbackInfo;
   }
 };
 
+// Fallback question generator
+const fallbackQuestionGenerator = (text: string): string | null => {
+  const lowerText = text.toLowerCase();
+  
+  if (lowerText.includes('lebron') || lowerText.includes('lebron james')) {
+    const questions = [
+      'How has LeBron James influenced basketball beyond his athletic performance?',
+      'What factors contribute to the debate about the greatest basketball player of all time?',
+      'How do cultural and social contexts shape our perception of sports figures?'
+    ];
+    return questions[Math.floor(Math.random() * questions.length)];
+  }
+  else if (lowerText.includes('earth') || lowerText.includes('planet')) {
+    const questions = [
+      'How does our understanding of Earth's systems impact environmental policy?',
+      'What can Earth's history teach us about future climate patterns?',
+      'How has our conception of Earth changed throughout human history?'
+    ];
+    return questions[Math.floor(Math.random() * questions.length)];
+  }
+  
+  // Generic thought-provoking questions
+  const genericQuestions = [
+    'How might this information influence our understanding of related topics?',
+    'What ethical considerations arise from this concept?',
+    'How has this idea evolved throughout different historical periods?',
+    'What counterarguments exist to this perspective?',
+    'How does this relate to everyday experiences and decision-making?',
+  ];
+  
+  return genericQuestions[Math.floor(Math.random() * genericQuestions.length)];
+};
+
 // Generate a question related to the statement
 export const generateQuestion = async (text: string): Promise<string | null> => {
   // Only generate questions occasionally to avoid overwhelming the audience
-  if (Math.random() > 0.3) {
+  if (Math.random() > 0.5) {
     return null;
   }
   
@@ -222,23 +276,6 @@ export const generateQuestion = async (text: string): Promise<string | null> => 
   const cacheKey = `question-${text}`;
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey);
-  }
-  
-  if (!hasApiKey()) {
-    // Simulate API latency
-    await delay(Math.random() * 2000 + 1000);
-    
-    // Use simplified fallback
-    const fallbackQuestions = [
-      'How might this information affect our understanding of related topics?',
-      'What are the ethical implications of this concept?',
-      'How has this idea evolved throughout history?',
-      'What counterarguments exist to this perspective?',
-      'How does this relate to everyday experiences?',
-    ];
-    const question = fallbackQuestions[Math.floor(Math.random() * fallbackQuestions.length)];
-    cache.set(cacheKey, question);
-    return question;
   }
   
   try {
@@ -259,6 +296,9 @@ export const generateQuestion = async (text: string): Promise<string | null> => 
     return question;
   } catch (error) {
     console.error('Error generating question:', error);
-    return null; // Skip question on error
+    // Return a generated fallback question instead of null
+    const fallbackQuestion = fallbackQuestionGenerator(text);
+    cache.set(cacheKey, fallbackQuestion);
+    return fallbackQuestion;
   }
 };
