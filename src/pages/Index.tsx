@@ -7,6 +7,7 @@ import TranscriptionDisplay from '@/components/TranscriptionDisplay';
 import FactChecker from '@/components/FactChecker';
 import InfoCard from '@/components/InfoCard';
 import AudienceQuestions from '@/components/AudienceQuestions';
+import ApiKeyForm from '@/components/ApiKeyForm';
 
 const Index: React.FC = () => {
   return (
@@ -23,6 +24,8 @@ const Index: React.FC = () => {
               Listen to a presentation while AI provides fact checks, additional context,
               and thought-provoking questions in real-time.
             </p>
+            
+            <ApiKeyForm />
             
             <TranscriptionDisplay />
             

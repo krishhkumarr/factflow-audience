@@ -1,35 +1,85 @@
 
 import { FactStatus } from '@/context/TranscriptionContext';
 
-// Simulated AI fact checking service
-// In a real app, this would connect to an actual AI service
-
-// Helper to introduce artificial delay (simulates API call)
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-// Simple cache to avoid reprocessing the same text
+// Cache to avoid reprocessing the same text
 const cache = new Map<string, any>();
 
-// Check if a statement is factual
-export const checkFact = async (text: string): Promise<{ status: FactStatus, detail: string }> => {
-  // Check cache first
-  const cacheKey = `fact-${text}`;
-  if (cache.has(cacheKey)) {
-    return cache.get(cacheKey);
+// Helper to introduce artificial delay (for when using cache)
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Function to get API key from localStorage or use provided one
+const getApiKey = (): string | null => {
+  return localStorage.getItem('openai_api_key');
+};
+
+// Store API key in localStorage
+export const storeApiKey = (key: string): void => {
+  localStorage.setItem('openai_api_key', key);
+};
+
+// Check if API key exists
+export const hasApiKey = (): boolean => {
+  return !!getApiKey();
+};
+
+// Clear API key from localStorage
+export const clearApiKey = (): void => {
+  localStorage.removeItem('openai_api_key');
+};
+
+// Call OpenAI API with proper error handling
+const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
+  const apiKey = getApiKey();
+  
+  if (!apiKey) {
+    throw new Error('OpenAI API key not found');
   }
   
-  // Simulate API latency
-  await delay(Math.random() * 1000 + 500);
-  
-  // Simple keyword-based simulation
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful, factual assistant. Provide accurate, concise responses.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.3
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'API request failed');
+    }
+    
+    const data = await response.json();
+    return data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('OpenAI API error:', error);
+    throw error;
+  }
+};
+
+// Fallback method for when API is unavailable
+const fallbackFactCheck = (text: string): { status: FactStatus, detail: string } => {
   const lowerText = text.toLowerCase();
-  
-  let result: { status: FactStatus, detail: string };
   
   if (lowerText.includes('earth is flat') || 
       lowerText.includes('moon landing fake') || 
       lowerText.includes('vaccines cause autism')) {
-    result = { 
+    return { 
       status: 'false', 
       detail: 'This statement contradicts established scientific consensus.' 
     };
@@ -37,7 +87,7 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
   else if (lowerText.includes('water') && lowerText.includes('boil') ||
            lowerText.includes('earth') && lowerText.includes('round') ||
            lowerText.includes('gravity')) {
-    result = { 
+    return { 
       status: 'true', 
       detail: 'This statement aligns with established scientific facts.' 
     };
@@ -46,36 +96,75 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
            lowerText.includes('future') || 
            lowerText.includes('might') || 
            lowerText.includes('could')) {
-    result = { 
+    return { 
       status: 'uncertain', 
       detail: 'This statement relates to future events or possibilities that cannot be verified.' 
     };
   }
   else {
-    // Randomly assign fact status for demonstration purposes
-    // In a real app, this would be a proper AI analysis
-    const random = Math.random();
-    if (random < 0.6) {
-      result = { 
-        status: 'true', 
-        detail: 'Based on available information, this appears to be accurate.' 
-      };
-    } else if (random < 0.8) {
-      result = { 
-        status: 'false', 
-        detail: 'This statement contains inaccuracies or misrepresentations.' 
-      };
-    } else {
-      result = { 
-        status: 'uncertain', 
-        detail: 'There isn\'t enough context or information to verify this statement.' 
-      };
-    }
+    // Default to uncertain when we can't determine
+    return { 
+      status: 'uncertain', 
+      detail: 'There isn\'t enough context or information to verify this statement.' 
+    };
+  }
+};
+
+// Check if a statement is factual using OpenAI
+export const checkFact = async (text: string): Promise<{ status: FactStatus, detail: string }> => {
+  // Check cache first
+  const cacheKey = `fact-${text}`;
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
   }
   
-  // Cache the result
-  cache.set(cacheKey, result);
-  return result;
+  if (!hasApiKey()) {
+    // Use fallback method if no API key
+    const result = fallbackFactCheck(text);
+    cache.set(cacheKey, result);
+    return result;
+  }
+  
+  try {
+    const prompt = `
+      Analyze this statement for factual accuracy: "${text}"
+      
+      First, categorize it as one of: TRUE (verified fact), FALSE (contains misinformation), or UNCERTAIN (cannot be definitively verified).
+      
+      Then provide a brief explanation (max 20 words) justifying your categorization.
+      
+      Format your response exactly like this example:
+      CATEGORY: TRUE
+      EXPLANATION: This is verified by extensive scientific research.
+    `;
+    
+    const response = await callOpenAI(prompt, 150);
+    const categoryMatch = response.match(/CATEGORY:\s*(TRUE|FALSE|UNCERTAIN)/i);
+    const explanationMatch = response.match(/EXPLANATION:\s*(.*)/i);
+    
+    let status: FactStatus = 'uncertain'; // Default
+    
+    if (categoryMatch && categoryMatch[1]) {
+      const category = categoryMatch[1].toUpperCase();
+      if (category === 'TRUE') status = 'true';
+      else if (category === 'FALSE') status = 'false';
+      else status = 'uncertain';
+    }
+    
+    const detail = explanationMatch && explanationMatch[1] 
+      ? explanationMatch[1] 
+      : 'Analysis complete but no detailed explanation available.';
+    
+    const result = { status, detail };
+    cache.set(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.error('Error during fact check:', error);
+    // Use fallback on API error
+    const result = fallbackFactCheck(text);
+    cache.set(cacheKey, result);
+    return result;
+  }
 };
 
 // Get additional contextual information about a statement
@@ -86,49 +175,42 @@ export const getAdditionalInfo = async (text: string): Promise<string> => {
     return cache.get(cacheKey);
   }
   
-  // Simulate API latency
-  await delay(Math.random() * 1500 + 500);
-  
-  // Simple keyword-based simulation
-  const lowerText = text.toLowerCase();
-  
-  let additionalInfo = '';
-  
-  if (lowerText.includes('water') && lowerText.includes('boil')) {
-    additionalInfo = 'Water boils at 100°C (212°F) at sea level, but the boiling point decreases with altitude due to lower atmospheric pressure.';
-  }
-  else if (lowerText.includes('earth') && lowerText.includes('round')) {
-    additionalInfo = 'The Earth is an oblate spheroid, slightly flattened at the poles and bulging at the equator, with a circumference of approximately 40,075 km (24,901 mi).';
-  }
-  else if (lowerText.includes('gravity')) {
-    additionalInfo = 'Gravity is one of the four fundamental forces and is described by Einstein\'s theory of General Relativity as the curvature of spacetime caused by mass and energy.';
-  }
-  else if (lowerText.includes('brain') || lowerText.includes('neuron')) {
-    additionalInfo = 'The human brain contains approximately 86 billion neurons, connected by trillions of synapses. It consumes about 20% of the body\'s energy despite being only 2% of its weight.';
-  }
-  else if (lowerText.includes('climate') || lowerText.includes('warming')) {
-    additionalInfo = 'Global climate data shows that the Earth\'s average temperature has increased by about 1.1°C since the pre-industrial era, primarily due to human activities.';
-  }
-  else if (lowerText.includes('quantum') || lowerText.includes('physics')) {
-    additionalInfo = 'Quantum mechanics describes nature at the smallest scales of energy levels of atoms and subatomic particles, introducing concepts like wave-particle duality and quantum entanglement.';
-  }
-  else {
-    // Generate generic additional information
-    const topics = [
+  if (!hasApiKey()) {
+    // Simulate API latency
+    await delay(Math.random() * 1500 + 500);
+    
+    // Use simplified fallback
+    const fallbackInfos = [
       'This topic relates to ongoing research in multiple scientific disciplines.',
       'Historical context is important when considering this statement.',
       'There are multiple perspectives on this topic among experts in the field.',
       'Recent studies have provided new insights into this area.',
       'This concept has evolved significantly over the past decades.',
-      'Understanding this topic requires consideration of multiple factors.',
-      'This relates to fundamental principles across several domains of knowledge.'
     ];
-    additionalInfo = topics[Math.floor(Math.random() * topics.length)];
+    const additionalInfo = fallbackInfos[Math.floor(Math.random() * fallbackInfos.length)];
+    cache.set(cacheKey, additionalInfo);
+    return additionalInfo;
   }
   
-  // Cache the result
-  cache.set(cacheKey, additionalInfo);
-  return additionalInfo;
+  try {
+    const prompt = `
+      Provide one interesting fact or piece of additional context about: "${text}"
+      
+      Keep your response under 30 words, focus on making it educational and factual.
+      Don't start with phrases like "Did you know" or "Interestingly".
+      Just provide the information directly.
+    `;
+    
+    const additionalInfo = await callOpenAI(prompt, 100);
+    cache.set(cacheKey, additionalInfo);
+    return additionalInfo;
+  } catch (error) {
+    console.error('Error getting additional info:', error);
+    // Fallback on error
+    const fallbackInfo = 'This topic connects to various fields of knowledge and ongoing research.';
+    cache.set(cacheKey, fallbackInfo);
+    return fallbackInfo;
+  }
 };
 
 // Generate a question related to the statement
@@ -144,47 +226,41 @@ export const generateQuestion = async (text: string): Promise<string | null> => 
     return cache.get(cacheKey);
   }
   
-  // Simulate API latency
-  await delay(Math.random() * 2000 + 1000);
-  
-  // Simple keyword-based simulation
-  const lowerText = text.toLowerCase();
-  
-  let question = '';
-  
-  if (lowerText.includes('water') || lowerText.includes('ocean')) {
-    question = 'How does water scarcity affect global food security?';
-  }
-  else if (lowerText.includes('earth') || lowerText.includes('planet')) {
-    question = 'How has our understanding of Earth\'s place in the universe evolved over time?';
-  }
-  else if (lowerText.includes('gravity') || lowerText.includes('physics')) {
-    question = 'How do gravitational waves help us understand the universe?';
-  }
-  else if (lowerText.includes('brain') || lowerText.includes('think')) {
-    question = 'How does neuroplasticity affect our ability to learn new skills?';
-  }
-  else if (lowerText.includes('climate') || lowerText.includes('environment')) {
-    question = 'What innovations show the most promise for addressing climate change?';
-  }
-  else if (lowerText.includes('technology') || lowerText.includes('digital')) {
-    question = 'How might advances in AI reshape human creativity and work?';
-  }
-  else {
-    // Generate a generic question
-    const questions = [
+  if (!hasApiKey()) {
+    // Simulate API latency
+    await delay(Math.random() * 2000 + 1000);
+    
+    // Use simplified fallback
+    const fallbackQuestions = [
       'How might this information affect our understanding of related topics?',
       'What are the ethical implications of this concept?',
       'How has this idea evolved throughout history?',
       'What counterarguments exist to this perspective?',
       'How does this relate to everyday experiences?',
-      'What future developments might we expect in this area?',
-      'How does this concept connect to other disciplines?'
     ];
-    question = questions[Math.floor(Math.random() * questions.length)];
+    const question = fallbackQuestions[Math.floor(Math.random() * fallbackQuestions.length)];
+    cache.set(cacheKey, question);
+    return question;
   }
   
-  // Cache the result
-  cache.set(cacheKey, question);
-  return question;
+  try {
+    const prompt = `
+      Generate one thought-provoking question related to this statement: "${text}"
+      
+      The question should:
+      1. Be open-ended (not yes/no)
+      2. Encourage critical thinking
+      3. Relate to the broader implications of the topic
+      4. Be concise (under 15 words if possible)
+      
+      Format as a direct question without any introduction.
+    `;
+    
+    const question = await callOpenAI(prompt, 80);
+    cache.set(cacheKey, question);
+    return question;
+  } catch (error) {
+    console.error('Error generating question:', error);
+    return null; // Skip question on error
+  }
 };
