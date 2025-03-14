@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { hasApiKey, storeApiKey, clearApiKey } from '@/utils/factCheckService';
+import { hasApiKey, storeApiKey, clearApiKey } from '@/utils/apiKeyUtils';
 import { toast } from '@/components/ui/use-toast';
 import { KeyRound, AlertCircle } from 'lucide-react';
 
