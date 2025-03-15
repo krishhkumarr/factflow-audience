@@ -62,7 +62,7 @@ const FactChecker: React.FC = () => {
     return (
       <div className="glass rounded-xl p-6 text-center h-full flex items-center justify-center">
         <p className="text-muted-foreground">
-          Spoken content will appear here when recording starts
+          Speak or type a statement to see its fact check result here
         </p>
       </div>
     );
@@ -73,7 +73,7 @@ const FactChecker: React.FC = () => {
       ref={scrollContainerRef}
       className="glass rounded-xl p-4 overflow-y-auto h-full"
     >
-      <h2 className="text-lg font-semibold mb-4">Fact Check</h2>
+      <h2 className="text-lg font-semibold mb-4">Fact Check Results</h2>
       <div className="space-y-5">
         {transcriptionHistory.map((segment) => (
           <div 

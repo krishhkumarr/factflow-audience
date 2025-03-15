@@ -1,5 +1,5 @@
 
-import { checkFact, getAdditionalInfo, generateQuestion } from '@/utils/factCheckService';
+import { checkFact, getAdditionalInfo, generateQuestion, checkStatementFactuality } from '@/utils/factCheckService';
 import { TranscriptionSegment } from './transcription-types';
 import { toast } from '@/components/ui/use-toast';
 
@@ -9,14 +9,16 @@ export const processSegmentWithAI = async (
   onResults: (factResult: any, additionalInfo: string, questionResult: string | null) => void
 ) => {
   try {
-    // Process the segment with AI services in parallel
-    const [factResult, additionalInfo, questionResult] = await Promise.all([
-      checkFact(segment.text),
-      getAdditionalInfo(segment.text),
-      generateQuestion(segment.text)
-    ]);
+    console.log('Processing segment:', segment.text);
     
-    onResults(factResult, additionalInfo, questionResult);
+    // Use the direct factuality check function for better error handling
+    const result = await checkStatementFactuality(segment.text);
+    
+    onResults(
+      { status: result.status, detail: result.detail }, 
+      result.additionalInfo || '', 
+      result.question
+    );
   } catch (error) {
     console.error('Error processing segment with AI:', error);
     toast({
@@ -24,6 +26,13 @@ export const processSegmentWithAI = async (
       description: "Please check your API key and try again",
       variant: "destructive",
     });
+    
+    // Use fallback processing
+    onResults(
+      { status: 'uncertain', detail: 'Unable to verify this statement at this time.' },
+      'Fact checking service is currently experiencing issues.',
+      null
+    );
   }
 };
 

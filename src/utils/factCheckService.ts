@@ -21,6 +21,9 @@ export const storeApiKey = (key: string): void => {
   localStorage.setItem('openai_api_key', key);
   // Clear cache when changing API key
   cache.clear();
+  // Reset API error flag when changing key
+  apiErrorDetected = false;
+  
   toast({
     title: "API Key Updated",
     description: "Your OpenAI API key has been saved",
@@ -35,6 +38,9 @@ export const hasApiKey = (): boolean => {
 // Clear API key from localStorage
 export const clearApiKey = (): void => {
   localStorage.removeItem('openai_api_key');
+  // Reset API error flag when clearing key
+  apiErrorDetected = false;
+  
   toast({
     title: "API Key Removed",
     description: "Using default API key now",
@@ -59,6 +65,7 @@ const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
   const apiKey = getApiKey();
   
   try {
+    console.log('Calling OpenAI API...');
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -84,10 +91,15 @@ const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
     
     if (!response.ok) {
       const errorData = await response.json();
+      console.error('OpenAI API error response:', errorData);
       
       // Check for quota exceeded error
       if (response.status === 429 || 
-          (errorData.error && errorData.error.type === 'insufficient_quota')) {
+          (errorData.error && (
+            errorData.error.type === 'insufficient_quota' || 
+            errorData.error.code === 'insufficient_quota' ||
+            errorData.error.message.includes('quota')
+          ))) {
         apiErrorDetected = true;
         resetApiErrorStatus();
         toast({
@@ -137,13 +149,18 @@ const fallbackFactCheck = (text: string): { status: FactStatus, detail: string }
   }
   
   // Sports facts
-  else if ((lowerText.includes('lebron') && !lowerText.includes('baseball')) ||
-           (lowerText.includes('messi') && !lowerText.includes('basketball')) ||
-           (lowerText.includes('federer') && !lowerText.includes('football'))) {
-    return { 
-      status: 'false', 
-      detail: 'This contains misconceptions about sports figures and their respective sports.' 
-    };
+  else if (lowerText.includes('lebron') || lowerText.includes('goat')) {
+    if (lowerText.includes('basketball') || lowerText.includes('nba') || lowerText.includes('goat')) {
+      return { 
+        status: 'uncertain', 
+        detail: 'This contains subjective opinions about sports figures.' 
+      };
+    } else if (lowerText.includes('baseball') || lowerText.includes('football')) {
+      return { 
+        status: 'false', 
+        detail: 'This contains misconceptions about sports figures.' 
+      };
+    }
   }
   
   // Future predictions
@@ -158,12 +175,10 @@ const fallbackFactCheck = (text: string): { status: FactStatus, detail: string }
   }
   
   // Default to uncertain when we can't determine
-  else {
-    return { 
-      status: 'uncertain', 
-      detail: 'There isn\'t enough context or information to verify this statement.' 
-    };
-  }
+  return { 
+    status: 'uncertain', 
+    detail: 'There isn\'t enough context or information to verify this statement.' 
+  };
 };
 
 // Extended keyword-based fact checking for common topics
@@ -197,24 +212,29 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
   // Check cache first
   const cacheKey = `fact-${text}`;
   if (cache.has(cacheKey)) {
-    return cache.get(cacheKey);
+    const cachedResult = cache.get(cacheKey);
+    console.log('Using cached fact check for:', text);
+    return cachedResult;
   }
   
   // Check if we can use keyword matching first (faster)
   const keywordResult = keywordFactCheck(text);
   if (keywordResult) {
+    console.log('Using keyword fact check for:', text);
     cache.set(cacheKey, keywordResult);
     return keywordResult;
   }
   
   // If API error already detected, use fallback immediately
   if (apiErrorDetected) {
+    console.log('API error detected, using fallback for:', text);
     const result = fallbackFactCheck(text);
     cache.set(cacheKey, result);
     return result;
   }
   
   try {
+    console.log('Performing OpenAI fact check for:', text);
     const prompt = `
       Analyze this statement for factual accuracy: "${text}"
       
@@ -228,6 +248,8 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
     `;
     
     const response = await callOpenAI(prompt, 150);
+    console.log('OpenAI fact check response:', response);
+    
     const categoryMatch = response.match(/CATEGORY:\s*(TRUE|FALSE|UNCERTAIN)/i);
     const explanationMatch = response.match(/EXPLANATION:\s*(.*)/i);
     
@@ -250,6 +272,7 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
   } catch (error) {
     console.error('Error during fact check:', error);
     // Use fallback on API error
+    console.log('Using fallback after API error for:', text);
     const result = fallbackFactCheck(text);
     cache.set(cacheKey, result);
     return result;
