@@ -1,5 +1,6 @@
 
 import { FactStatus } from '@/context/TranscriptionContext';
+import { toast } from '@/components/ui/use-toast';
 
 // Cache to avoid reprocessing the same text
 const cache = new Map<string, any>();
@@ -18,6 +19,12 @@ const getApiKey = (): string => {
 // Store API key in localStorage
 export const storeApiKey = (key: string): void => {
   localStorage.setItem('openai_api_key', key);
+  // Clear cache when changing API key
+  cache.clear();
+  toast({
+    title: "API Key Updated",
+    description: "Your OpenAI API key has been saved",
+  });
 };
 
 // Check if API key exists
@@ -28,10 +35,27 @@ export const hasApiKey = (): boolean => {
 // Clear API key from localStorage
 export const clearApiKey = (): void => {
   localStorage.removeItem('openai_api_key');
+  toast({
+    title: "API Key Removed",
+    description: "Using default API key now",
+  });
+};
+
+// Track API errors to avoid repeated failed calls
+let apiErrorDetected = false;
+const resetApiErrorStatus = () => {
+  setTimeout(() => {
+    apiErrorDetected = false;
+  }, 60000); // Reset after 1 minute
 };
 
 // Call OpenAI API with proper error handling
 const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
+  // If we already detected an API error, don't make additional calls
+  if (apiErrorDetected) {
+    throw new Error('API currently unavailable due to quota limits');
+  }
+  
   const apiKey = getApiKey();
   
   try {
@@ -60,6 +84,19 @@ const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
     
     if (!response.ok) {
       const errorData = await response.json();
+      
+      // Check for quota exceeded error
+      if (response.status === 429 || 
+          (errorData.error && errorData.error.type === 'insufficient_quota')) {
+        apiErrorDetected = true;
+        resetApiErrorStatus();
+        toast({
+          title: "API Quota Exceeded",
+          description: "Using fallback mode for fact checking",
+          variant: "destructive",
+        });
+      }
+      
       throw new Error(errorData.error?.message || 'API request failed');
     }
     
@@ -71,26 +108,45 @@ const callOpenAI = async (prompt: string, maxTokens = 150): Promise<string> => {
   }
 };
 
-// Fallback method for when API is unavailable
+// Enhanced fallback method for when API is unavailable
 const fallbackFactCheck = (text: string): { status: FactStatus, detail: string } => {
   const lowerText = text.toLowerCase();
   
+  // Common misinformation
   if (lowerText.includes('earth is flat') || 
       lowerText.includes('moon landing fake') || 
-      lowerText.includes('vaccines cause autism')) {
+      lowerText.includes('vaccines cause autism') ||
+      lowerText.includes('5g causes covid') ||
+      lowerText.includes('climate change is a hoax')) {
     return { 
       status: 'false', 
       detail: 'This statement contradicts established scientific consensus.' 
     };
   } 
-  else if (lowerText.includes('water') && lowerText.includes('boil') ||
-           lowerText.includes('earth') && lowerText.includes('round') ||
-           lowerText.includes('gravity')) {
+  
+  // Well-established facts
+  else if ((lowerText.includes('water') && lowerText.includes('boil')) ||
+           (lowerText.includes('earth') && lowerText.includes('round')) ||
+           lowerText.includes('gravity') ||
+           (lowerText.includes('sun') && lowerText.includes('center')) ||
+           (lowerText.includes('humans') && lowerText.includes('mammals'))) {
     return { 
       status: 'true', 
       detail: 'This statement aligns with established scientific facts.' 
     };
   }
+  
+  // Sports facts
+  else if ((lowerText.includes('lebron') && !lowerText.includes('baseball')) ||
+           (lowerText.includes('messi') && !lowerText.includes('basketball')) ||
+           (lowerText.includes('federer') && !lowerText.includes('football'))) {
+    return { 
+      status: 'false', 
+      detail: 'This contains misconceptions about sports figures and their respective sports.' 
+    };
+  }
+  
+  // Future predictions
   else if (lowerText.includes('will') || 
            lowerText.includes('future') || 
            lowerText.includes('might') || 
@@ -100,8 +156,9 @@ const fallbackFactCheck = (text: string): { status: FactStatus, detail: string }
       detail: 'This statement relates to future events or possibilities that cannot be verified.' 
     };
   }
+  
+  // Default to uncertain when we can't determine
   else {
-    // Default to uncertain when we can't determine
     return { 
       status: 'uncertain', 
       detail: 'There isn\'t enough context or information to verify this statement.' 
@@ -109,7 +166,33 @@ const fallbackFactCheck = (text: string): { status: FactStatus, detail: string }
   }
 };
 
-// Check if a statement is factual using OpenAI
+// Extended keyword-based fact checking for common topics
+const keywordFactCheck = (text: string): { status: FactStatus, detail: string } | null => {
+  const lowerText = text.toLowerCase();
+  
+  // Science topics
+  if (lowerText.includes('evolution') && lowerText.includes('theory')) {
+    return { 
+      status: 'true', 
+      detail: 'Evolution is widely accepted scientific theory supported by extensive evidence.' 
+    };
+  }
+  
+  // History topics
+  if (lowerText.includes('world war 2') || lowerText.includes('world war ii')) {
+    if (lowerText.includes('1939') && lowerText.includes('1945')) {
+      return { 
+        status: 'true', 
+        detail: 'World War II did occur between 1939 and 1945.' 
+      };
+    }
+  }
+  
+  // Return null if no keyword matches found
+  return null;
+}
+
+// Check if a statement is factual using OpenAI or fallbacks
 export const checkFact = async (text: string): Promise<{ status: FactStatus, detail: string }> => {
   // Check cache first
   const cacheKey = `fact-${text}`;
@@ -117,8 +200,15 @@ export const checkFact = async (text: string): Promise<{ status: FactStatus, det
     return cache.get(cacheKey);
   }
   
-  if (!hasApiKey()) {
-    // Use fallback method if no API key
+  // Check if we can use keyword matching first (faster)
+  const keywordResult = keywordFactCheck(text);
+  if (keywordResult) {
+    cache.set(cacheKey, keywordResult);
+    return keywordResult;
+  }
+  
+  // If API error already detected, use fallback immediately
+  if (apiErrorDetected) {
     const result = fallbackFactCheck(text);
     cache.set(cacheKey, result);
     return result;
@@ -174,17 +264,20 @@ export const getAdditionalInfo = async (text: string): Promise<string> => {
     return cache.get(cacheKey);
   }
   
-  if (!hasApiKey()) {
-    // Simulate API latency
-    await delay(Math.random() * 1500 + 500);
+  // If API error already detected, use fallback immediately
+  if (apiErrorDetected) {
+    await delay(Math.random() * 500 + 200); // Simulate shorter API latency
     
-    // Use simplified fallback
+    // Use fallback info generation
     const fallbackInfos = [
       'This topic relates to ongoing research in multiple scientific disciplines.',
       'Historical context is important when considering this statement.',
       'There are multiple perspectives on this topic among experts in the field.',
       'Recent studies have provided new insights into this area.',
       'This concept has evolved significantly over the past decades.',
+      'Educational resources often include this topic in their curriculum.',
+      'Many people commonly misunderstand this concept.',
+      'The scientific community generally agrees on the fundamental aspects of this topic.',
     ];
     const additionalInfo = fallbackInfos[Math.floor(Math.random() * fallbackInfos.length)];
     cache.set(cacheKey, additionalInfo);
@@ -225,17 +318,20 @@ export const generateQuestion = async (text: string): Promise<string | null> => 
     return cache.get(cacheKey);
   }
   
-  if (!hasApiKey()) {
-    // Simulate API latency
-    await delay(Math.random() * 2000 + 1000);
+  // If API error already detected, use fallback immediately
+  if (apiErrorDetected) {
+    await delay(Math.random() * 500 + 200); // Simulate shorter API latency
     
-    // Use simplified fallback
+    // Use fallback question generation
     const fallbackQuestions = [
       'How might this information affect our understanding of related topics?',
       'What are the ethical implications of this concept?',
       'How has this idea evolved throughout history?',
       'What counterarguments exist to this perspective?',
       'How does this relate to everyday experiences?',
+      'Who benefits from this knowledge being widely accepted?',
+      'How might future research change our understanding of this topic?',
+      'What assumptions underlie this statement?',
     ];
     const question = fallbackQuestions[Math.floor(Math.random() * fallbackQuestions.length)];
     cache.set(cacheKey, question);
@@ -261,5 +357,40 @@ export const generateQuestion = async (text: string): Promise<string | null> => 
   } catch (error) {
     console.error('Error generating question:', error);
     return null; // Skip question on error
+  }
+};
+
+// Direct fact check function for use from UI
+export const checkStatementFactuality = async (statement: string): Promise<{
+  status: FactStatus;
+  detail: string;
+  additionalInfo?: string;
+  question?: string | null;
+}> => {
+  try {
+    // Process all in parallel for efficiency
+    const [factResult, additionalInfo, questionResult] = await Promise.all([
+      checkFact(statement),
+      getAdditionalInfo(statement),
+      generateQuestion(statement)
+    ]);
+    
+    return {
+      status: factResult.status,
+      detail: factResult.detail,
+      additionalInfo,
+      question: questionResult
+    };
+  } catch (error) {
+    console.error('Error checking statement factuality:', error);
+    
+    // Provide fallback results
+    const fallbackResult = fallbackFactCheck(statement);
+    return {
+      status: fallbackResult.status,
+      detail: fallbackResult.detail,
+      additionalInfo: 'Unable to generate additional context at this time.',
+      question: null
+    };
   }
 };
