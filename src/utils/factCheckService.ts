@@ -1,3 +1,4 @@
+
 import { FactStatus } from '@/context/TranscriptionContext';
 
 // Cache to avoid reprocessing the same text
@@ -7,7 +8,7 @@ const cache = new Map<string, any>();
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // The provided OpenAI API key (will use this if no key in localStorage)
-const DEFAULT_API_KEY = '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';
+const DEFAULT_API_KEY = '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';
 
 // Function to get API key from localStorage or use provided one
 const getApiKey = (): string => {
