@@ -1,55 +1,23 @@
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
 import { startRecognition, stopRecognition } from '@/utils/speechRecognition';
-import { checkFact, getAdditionalInfo, generateQuestion } from '@/utils/factCheckService';
-import { toast } from '@/components/ui/use-toast';
-
-export type FactStatus = 'true' | 'false' | 'uncertain' | 'checking' | null;
-
-interface TranscriptionSegment {
-  id: string;
-  text: string;
-  factStatus: FactStatus;
-  factDetail?: string;
-  additionalInfo?: string;
-}
-
-interface Question {
-  id: string;
-  text: string;
-  timestamp: number;
-}
-
-interface TranscriptionContextType {
-  isRecording: boolean;
-  isProcessing: boolean;
-  currentTranscription: string;
-  transcriptionHistory: TranscriptionSegment[];
-  questions: Question[];
-  startRecording: () => void;
-  stopRecording: () => void;
-  processTextInput: (text: string) => void;
-  clearAll: () => void;
-}
+import { TranscriptionContextType, TranscriptionSegment, Question } from './transcription-types';
+import { transcriptionReducer, initialTranscriptionState } from './transcription-reducer';
+import { processSegmentWithAI, isSignificantSegment, showRecordingToast, showClearAllToast } from './transcription-utils';
 
 const TranscriptionContext = createContext<TranscriptionContextType | undefined>(undefined);
 
 export const TranscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [currentTranscription, setCurrentTranscription] = useState('');
-  const [transcriptionHistory, setTranscriptionHistory] = useState<TranscriptionSegment[]>([]);
-  const [pendingSegment, setPendingSegment] = useState('');
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [segmentCount, setSegmentCount] = useState(0);
-
+  // Use reducer for state management
+  const [state, dispatch] = useReducer(transcriptionReducer, initialTranscriptionState);
+  
   // Process new text segment (used for both speech and typed input)
   const processTextSegment = useCallback((newSegment: string) => {
-    if (newSegment.split(' ').length < 3) return;
+    if (!isSignificantSegment(newSegment)) return;
     
-    setIsProcessing(true);
-    const segmentId = `segment-${segmentCount}`;
-    setSegmentCount(prev => prev + 1);
+    dispatch({ type: 'SET_PROCESSING', payload: true });
+    
+    const segmentId = `segment-${state.segmentCount}`;
     
     // Add new segment with "checking" status
     const newTranscriptionSegment: TranscriptionSegment = {
@@ -58,53 +26,55 @@ export const TranscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
       factStatus: 'checking'
     };
     
-    setTranscriptionHistory(prev => [...prev, newTranscriptionSegment]);
+    dispatch({ type: 'ADD_TRANSCRIPTION_SEGMENT', payload: newTranscriptionSegment });
     
     // Process the segment with AI
-    Promise.all([
-      checkFact(newSegment),
-      getAdditionalInfo(newSegment),
-      generateQuestion(newSegment)
-    ]).then(([factResult, additionalInfo, questionResult]) => {
-      // Update the segment with AI results
-      setTranscriptionHistory(prev => 
-        prev.map(segment => 
-          segment.id === segmentId 
-            ? { 
-                ...segment, 
-                factStatus: factResult.status, 
-                factDetail: factResult.detail,
-                additionalInfo 
-              } 
-            : segment
-        )
-      );
-      
-      // Add new question if generated
-      if (questionResult) {
-        setQuestions(prev => [
-          ...prev, 
-          { id: `question-${Date.now()}`, text: questionResult, timestamp: Date.now() }
-        ]);
+    processSegmentWithAI(
+      newTranscriptionSegment,
+      (factResult, additionalInfo, questionResult) => {
+        // Update the segment with AI results
+        dispatch({
+          type: 'UPDATE_TRANSCRIPTION_SEGMENT',
+          payload: {
+            id: segmentId,
+            updates: {
+              factStatus: factResult.status,
+              factDetail: factResult.detail,
+              additionalInfo
+            }
+          }
+        });
+        
+        // Add new question if generated
+        if (questionResult) {
+          dispatch({
+            type: 'ADD_QUESTION',
+            payload: {
+              id: `question-${Date.now()}`,
+              text: questionResult,
+              timestamp: Date.now()
+            }
+          });
+        }
+        
+        dispatch({ type: 'SET_PROCESSING', payload: false });
       }
-      
-      setIsProcessing(false);
-    });
-  }, [segmentCount]);
+    );
+  }, [state.segmentCount]);
 
   // Handle new transcription text
   const handleTranscription = useCallback((text: string) => {
-    setCurrentTranscription(text);
+    dispatch({ type: 'SET_CURRENT_TRANSCRIPTION', payload: text });
     
     // If there's a significant amount of new text, create a new segment
-    if (text.length > pendingSegment.length + 10) {
-      const newSegment = text.substring(pendingSegment.length).trim();
-      setPendingSegment(text);
+    if (text.length > state.pendingSegment.length + 10) {
+      const newSegment = text.substring(state.pendingSegment.length).trim();
+      dispatch({ type: 'SET_PENDING_SEGMENT', payload: text });
       
       // Process the new segment
       processTextSegment(newSegment);
     }
-  }, [pendingSegment, processTextSegment]);
+  }, [state.pendingSegment, processTextSegment]);
 
   // Process manually entered text
   const processTextInput = useCallback((text: string) => {
@@ -115,63 +85,46 @@ export const TranscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
   const startRecording = useCallback(() => {
     try {
       startRecognition(handleTranscription);
-      setIsRecording(true);
-      toast({
-        title: "Recording started",
-        description: "Speak clearly for best results",
-      });
+      dispatch({ type: 'SET_RECORDING', payload: true });
+      showRecordingToast(true);
     } catch (error) {
       console.error('Failed to start recording:', error);
-      toast({
-        title: "Failed to start recording",
-        description: "Please check microphone permissions",
-        variant: "destructive",
-      });
     }
   }, [handleTranscription]);
 
   // Stop recording
   const stopRecording = useCallback(() => {
     stopRecognition();
-    setIsRecording(false);
-    setCurrentTranscription('');
-    setPendingSegment('');
-    toast({
-      title: "Recording stopped",
-    });
+    dispatch({ type: 'SET_RECORDING', payload: false });
+    dispatch({ type: 'SET_CURRENT_TRANSCRIPTION', payload: '' });
+    dispatch({ type: 'SET_PENDING_SEGMENT', payload: '' });
+    showRecordingToast(false);
   }, []);
 
   // Clear all data
   const clearAll = useCallback(() => {
-    if (isRecording) {
+    if (state.isRecording) {
       stopRecognition();
-      setIsRecording(false);
     }
-    setCurrentTranscription('');
-    setPendingSegment('');
-    setTranscriptionHistory([]);
-    setQuestions([]);
-    setSegmentCount(0);
-    toast({
-      title: "All data cleared",
-    });
-  }, [isRecording]);
+    dispatch({ type: 'CLEAR_ALL' });
+    showClearAllToast();
+  }, [state.isRecording]);
 
   // Clean up on unmount
   useEffect(() => {
     return () => {
-      if (isRecording) {
+      if (state.isRecording) {
         stopRecognition();
       }
     };
-  }, [isRecording]);
+  }, [state.isRecording]);
 
-  const value = {
-    isRecording,
-    isProcessing,
-    currentTranscription,
-    transcriptionHistory,
-    questions,
+  const contextValue: TranscriptionContextType = {
+    isRecording: state.isRecording,
+    isProcessing: state.isProcessing,
+    currentTranscription: state.currentTranscription,
+    transcriptionHistory: state.transcriptionHistory,
+    questions: state.questions,
     startRecording,
     stopRecording,
     processTextInput,
@@ -179,7 +132,7 @@ export const TranscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   return (
-    <TranscriptionContext.Provider value={value}>
+    <TranscriptionContext.Provider value={contextValue}>
       {children}
     </TranscriptionContext.Provider>
   );
@@ -192,3 +145,5 @@ export const useTranscription = () => {
   }
   return context;
 };
+
+export type { FactStatus } from './transcription-types';
